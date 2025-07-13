@@ -12,32 +12,16 @@ env:
         ccache --set-config=compression=true
 jobs:
   build-macos:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     env:
       CCACHE_TEMPDIR: /tmp/.ccache-temp
     strategy:
       fail-fast: false
       matrix:
         toolchain:
-          - name: "build-depends-armv8"
-            host: "aarch64-linux-gnu"
-            packages: "python3 gperf g++-aarch64-linux-gnu"
-          - name: "build-depends-armv8 RPi"
-            host: "aarch64-linux-gnu"
-            packages: "python3 gperf g++-aarch64-linux-gnu"
-            cmake_opts: "-DNO_AES=ON"
-          - name: "build-depends-windows-x64"
-            host: "x86_64-w64-mingw32"
-            packages: "cmake python3 g++-mingw-w64-x86-64 qttools5-dev-tools"
           - name: "build-depends-x86_64-linux"
             host: "x86_64-unknown-linux-gnu"
             packages: "gperf cmake python3-zmq libdbus-1-dev libharfbuzz-dev"
-          - name: "build-depends-macOS-x64"
-            host: "x86_64-apple-darwin"
-            packages: "cmake ccache imagemagick libcap-dev librsvg2-bin libz-dev libbz2-dev libtiff-tools libtinfo6 curl bsdmainutils python3-dev python3-setuptools"
-          - name: "build-depends-macOS-arm64"
-            host: "aarch64-apple-darwin"
-            packages: "cmake ccache imagemagick libcap-dev librsvg2-bin libz-dev libbz2-dev libtiff-tools libtinfo6 curl bsdmainutils python3-dev python3-setuptools"
     name: ${{ matrix.toolchain.name }}
     steps:
     - uses: actions/checkout@v4
@@ -64,11 +48,6 @@ jobs:
       run: ${{env.APT_SET_CONF}}
     - name: install dependencies
       run: sudo apt update; sudo apt -y install build-essential libtool cmake autotools-dev automake pkg-config bsdmainutils curl git ca-certificates ccache ${{ matrix.toolchain.packages }}
-    - name: prepare w64-mingw32
-      if: ${{ matrix.toolchain.host == 'x86_64-w64-mingw32' }}
-      run: |
-        sudo update-alternatives --set ${{ matrix.toolchain.host }}-g++ $(which ${{ matrix.toolchain.host }}-g++-posix)
-        sudo update-alternatives --set ${{ matrix.toolchain.host }}-gcc $(which ${{ matrix.toolchain.host }}-gcc-posix)
     - name: build
       run: |
         ${{env.CCACHE_SETTINGS}}
@@ -83,16 +62,3 @@ jobs:
       with:
         name: ${{ matrix.toolchain.name }}
         path: distfiles/${{ matrix.toolchain.name }}
-
-#Upload artifacts
-    - name: Copy files via ssh
-      uses: appleboy/scp-action@v0.1.7
-      if: ${{ matrix.toolchain.host == 'x86_64-w64-mingw32' || matrix.toolchain.host == 'x86_64-unknown-linux-gnu' || matrix.toolchain.host == 'x86_64-apple-darwin' || matrix.toolchain.host == 'aarch64-apple-darwin' || matrix.toolchain.host == 'aarch64-linux-gnu' || matrix.toolchain.host == 'aarch64-linux-gnu-RPi' }}
-      with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.PRIVATE_KEY }}
-          port: ${{ secrets.PORT }}
-#          source: ${{ github.workspace }}/build/${{ matrix.toolchain.host }}/release/bin/arqma*
-          source: distfiles
-          target: downloads/CLI

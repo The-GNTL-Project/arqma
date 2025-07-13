@@ -86,6 +86,8 @@ namespace cryptonote
 #define CORE_RPC_STATUS_OK   "OK"
 #define CORE_RPC_STATUS_BUSY   "BUSY"
 #define CORE_RPC_STATUS_NOT_MINING "NOT MINING"
+constexpr char const CORE_RPC_STATUS_TX_LONG_POLL_TIMED_OUT[] = "Long polling client timed out before txpool had an update";
+constexpr char const CORE_RPC_STATUS_TX_LONG_POLL_MAX_CONNECTIONS[] = "Daemon maxed out long polling connections";
 
 // When making *any* change here, bump minor
 // If the change is incompatible, then bump major and set minor to 0
@@ -95,7 +97,7 @@ namespace cryptonote
 // advance which version they will stop working with
 // Don't go over 32767 for any of these
 #define CORE_RPC_VERSION_MAJOR 4
-#define CORE_RPC_VERSION_MINOR 2
+#define CORE_RPC_VERSION_MINOR 3
 #define MAKE_CORE_RPC_VERSION(major,minor) (((major)<<16)|(minor))
 #define CORE_RPC_VERSION MAKE_CORE_RPC_VERSION(CORE_RPC_VERSION_MAJOR, CORE_RPC_VERSION_MINOR)
 
@@ -634,14 +636,10 @@ namespace cryptonote
     {
       std::string miner_address;
       uint64_t    threads_count;
-      bool        do_background_mining;
-      bool        ignore_battery;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(miner_address)
         KV_SERIALIZE(threads_count)
-        KV_SERIALIZE(do_background_mining)
-        KV_SERIALIZE(ignore_battery)
       END_KV_SERIALIZE_MAP()
     };
     typedef epee::misc_utils::struct_init<request_t> request;
@@ -695,6 +693,7 @@ namespace cryptonote
       uint64_t block_weight_median;
       uint64_t start_time;
       uint64_t last_storage_server_ping;
+//      uint64_t last_arqnet_ping;
       uint64_t free_space;
       bool offline;
       bool untrusted;
@@ -734,6 +733,7 @@ namespace cryptonote
         KV_SERIALIZE_OPT(block_weight_median, (uint64_t)0)
         KV_SERIALIZE(start_time)
         KV_SERIALIZE(last_storage_server_ping)
+//        KV_SERIALIZE(last_arqnet_ping)
         KV_SERIALIZE(free_space)
         KV_SERIALIZE(offline)
         KV_SERIALIZE(untrusted)
@@ -1414,7 +1414,11 @@ namespace cryptonote
   {
     struct request_t
     {
+      bool long_poll;
+      crypto::hash tx_pool_checksum;
       BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE_OPT(long_poll, false)
+        KV_SERIALIZE_VAL_POD_AS_BLOB_OPT(tx_pool_checksum, crypto::hash{})
       END_KV_SERIALIZE_MAP()
     };
     typedef epee::misc_utils::struct_init<request_t> request;
@@ -2649,6 +2653,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
         std::string operator_address;
         std::string public_ip;
         uint16_t storage_port;
+        uint16_t arqnet_port;
         std::string pubkey_ed25519;
         std::string pubkey_x25519;
 
@@ -2681,6 +2686,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
           KV_SERIALIZE(operator_address)
           KV_SERIALIZE(public_ip)
           KV_SERIALIZE(storage_port)
+          KV_SERIALIZE(arqnet_port)
           KV_SERIALIZE(pubkey_ed25519)
           KV_SERIALIZE(pubkey_x25519)
           KV_SERIALIZE(last_uptime_proof)
@@ -2739,6 +2745,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
       bool operator_address;
       bool public_ip;
       bool storage_port;
+      bool arqnet_port;
       bool pubkey_ed25519;
       bool pubkey_x25519;
       bool last_uptime_proof;
@@ -2774,6 +2781,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
         KV_SERIALIZE_OPT2(operator_address, false)
         KV_SERIALIZE_OPT2(public_ip, false)
         KV_SERIALIZE_OPT2(storage_port, false)
+        KV_SERIALIZE_OPT2(arqnet_port, false)
         KV_SERIALIZE_OPT2(pubkey_ed25519, false)
         KV_SERIALIZE_OPT2(pubkey_x25519, false)
         KV_SERIALIZE_OPT2(last_uptime_proof, false)
@@ -2795,13 +2803,13 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
       uint32_t limit;
       bool active_only;
       requested_fields_t fields;
-      std::string if_block_not_equal;
+      std::string poll_block_hash;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(limit)
         KV_SERIALIZE(active_only)
         KV_SERIALIZE(fields)
-        KV_SERIALIZE(if_block_not_equal)
+        KV_SERIALIZE(poll_block_hash)
       END_KV_SERIALIZE_MAP()
     };
     typedef epee::misc_utils::struct_init<request_t> request;
@@ -2834,6 +2842,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
         std::string operator_address; // The wallet address of the operator to which the operator cut of the staking reward is sent to.
         std::string public_ip; // The public ip address of the service node
         uint16_t storage_port; // The port number associated with the storage server
+        uint16_t arqnet_port;
         std::string pubkey_ed25519;
         std::string pubkey_x25519;
         uint64_t last_uptime_proof;
@@ -2865,6 +2874,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(operator_address)
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(public_ip)
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(storage_port)
+          KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(arqnet_port)
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(pubkey_ed25519);
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(pubkey_x25519);
           KV_SERIALIZE_ENTRY_FIELD_IF_REQUESTED(last_uptime_proof)
@@ -2878,7 +2888,7 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
       };
 
       requested_fields_t fields;
-      bool gave_if_not_equal;
+      bool polling_mode;
 
       std::vector<entry> service_node_states; // Array of service node registration information
       uint64_t height; // Current block height
@@ -2893,9 +2903,9 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
         KV_SERIALIZE(status)
         if (this_ref.fields.height) KV_SERIALIZE(height)
         if (this_ref.fields.target_height) KV_SERIALIZE(target_height)
-        if (this_ref.fields.block_hash || (this_ref.gave_if_not_equal && !this_ref.unchanged)) KV_SERIALIZE(block_hash)
+        if (this_ref.fields.block_hash || (this_ref.polling_mode && !this_ref.unchanged)) KV_SERIALIZE(block_hash)
         if (this_ref.fields.hardfork) KV_SERIALIZE(hardfork)
-        if (this_ref.gave_if_not_equal) KV_SERIALIZE(unchanged)
+        if (this_ref.polling_mode) KV_SERIALIZE(unchanged)
       END_KV_SERIALIZE_MAP()
     };
     typedef epee::misc_utils::struct_init<response_t> response;
@@ -2923,6 +2933,27 @@ struct COMMAND_RPC_GET_BLOCKS_RANGE
       END_KV_SERIALIZE_MAP()
     };
   };
+
+/*
+  struct COMMAND_RPC_ARQNET_PING
+  {
+    struct request
+    {
+      std::array<int, 3> version;
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(version);
+      END_KV_SERIALIZE_MAP()
+    };
+
+    struct response
+    {
+      std::string status;
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(status)
+      END_KV_SERIALIZE_MAP()
+    };
+  };
+*/
 
   struct COMMAND_RPC_GET_STAKING_REQUIREMENT
   {
